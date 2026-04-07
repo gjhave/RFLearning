@@ -1,5 +1,8 @@
 """
 值迭代的过程，是由一个随机初始化的state_value计算出来的，所以中间过程并不代表当前策略下的state value，只是迭代中产生的中间值，没有任何意义
+书中给出的伪代码，和第(3)文中的思路略为有点不同，但并不影响结果：
+常规的思路是，先将v迭代收敛到v*，然后再用greedy更新策略到optimal。
+伪代码中是在每一次迭代过程中，都用greedy跟新，但这并不影响结果。因为值迭代算法是解BOE的过程，在迭代的过程中，要计算每一个q后取最大值，因此不受当前policy影响。在每次迭代中跟新和最后更新都没有问题。
 """
 
 """
@@ -32,7 +35,7 @@ class ValueIteration(GridWorldEnv):
 
     def value_iteration_step(self):
         """执行一步值迭代"""
-        stable = True  # 用于检查策略是否稳定
+        stable = True  # 检查state value是否收敛到optimal state value
         for x in range(self.rows):
             for y in range(self.cols):
 
@@ -43,7 +46,7 @@ class ValueIteration(GridWorldEnv):
                     # 计算return value
                     g = r + self.gamma * self.state_values[s2[0], s2[1]]
                     qvs.append(g)
-
+                """在迭代中，每一步都更新当前state的policy"""
                 # policy update, 选择最大动作价值对应的动作作为当前状态的最优动作
                 self.policy[x, y] = self.epsilon_greedy(np.argmax(qvs), epsilon=0)
                 # update state value to max action value
@@ -51,6 +54,7 @@ class ValueIteration(GridWorldEnv):
                 if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
                     stable = False  # 如果状态价值变化超过阈值，认为策略还没有达到最优
                 self.state_values[x, y] = sv  # 更新状态价值
+        
         return stable  # 返回策略是否稳定
 
     def train(self):
@@ -62,6 +66,17 @@ class ValueIteration(GridWorldEnv):
 
             # 检查收敛
             if stable:
+                """在v(s)收敛到optimal后更新policy"""
+                # for x in range(self.rows):
+                #     for y in range(self.cols):
+                #         qvs = []
+                #         for a in self.action_space:
+                #             r, s2 = self.get_next_state_and_reward([x, y], a)
+                #             # 计算return value
+                #             g = r + self.gamma * self.state_values[s2[0], s2[1]]
+                #             qvs.append(g)
+                #         ai = np.argmax(qvs)
+                #         self.policy[x, y] = self.epsilon_greedy(ai, 0)
                 print(f"\nConverged after {i + 1} iterations!")
                 break
 
