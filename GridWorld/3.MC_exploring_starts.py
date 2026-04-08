@@ -39,129 +39,58 @@ class MCEpsilonGreedy(GridWorldEnv):
 
     def __init__(self, HP: HyperParameters, action_space=9, newgrid=False):
         super().__init__(HP, action_space, newgrid)
+        self.episode_length = 100  # 固定长度的episode
+        self.lr = 0.999
 
-
-        """ 
-        MC方法的特性：
-        return = Rt+1 + γRt+2 + γ2Rt+3 + . . . .，epsiode越长，引入的随机变量越多，方差越大。
-        这里epsilon必须足够小，否则很难收敛，原因是随机探索，epsiode越往后，越会引入高方差，导致价值估计不稳定，策略改进会反复震荡
-        """
-        # self.episode_length = int(
-        #     self.rows * self.cols * 200 * len(self.action_space)
-        # )  # 根据网格大小和动作数量动态调整episode长度
-        self.episode_length = 100000  # 固定长度的episode
-
-    def reset(self):
-        super().reset()
-        """重置环境但保持网格不变"""
-
-    def get_episode(self):
+    def get_episode(self, x=None, y=None, ai=None):
         """生成一个完整的episode，返回状态-动作-奖励序列"""
         states = []
         actions = []
         rewards = []
         # 从tartget状态开始，确保每个状态-动作对都有机会被探索
-
-        x, y = np.random.randint(0, self.rows), np.random.randint(0, self.cols)
-        for _ in range(self.episode_length):
-            states.append((x, y))  # 记录状态和动作
+        if x is None and y is None and ai is None:
+            x, y = np.random.randint(0, self.rows), np.random.randint(0, self.cols)
             a, ai = self.select_action(x, y)
+        # x, y = 0, 0
+        for _ in range(self.episode_length):
+            # self.agent_step(x, y)
+            states.append((x, y))  # 记录状态和动作
             actions.append(ai)
-            reward, (x, y) = self.get_next_state_and_reward((x, y), a)
-            rewards.append(reward)
+            r, (x2, y2) = self.get_next_state_and_reward((x, y), self.action_space[ai])
+            a2, ai2 = self.select_action(x2, y2)
+            x, y = x2, y2
+            ai = ai2
+            rewards.append(r)
 
         return states, actions, rewards
 
-    def value_iteration_step(self):
-        """执行MC Exploring Starts算法"""
-        stable = True
-        states, actions, rewards = self.get_episode()  # 第一次迭代使用完全随机的episode
-        visit_count = np.zeros(
-            (self.rows, self.cols, len(self.action_space)), dtype=int
-        )  # 每个状态-动作对的访问次数
-        returns = np.zeros(
-            (self.rows, self.cols, len(self.action_space)), dtype=np.float32
-        )
-        g = 0
-        for t in reversed(range(len(states))):
-            x, y = states[t]
-            ai = actions[t]
-            r = rewards[t]
-            g = self.gamma * g + r  # 计算从t时刻开始的回报
-            returns[x, y, ai] += g  # 每访问一次某个(s, a)，增加一个sample，
-            visit_count[x, y, ai] += 1  # 记录访问该(s, a)的次数
-            # policy evaluation, 使用均值估计方法来更新action value
-            self.action_values[x, y, ai] = (
-                returns[x, y, ai] / (visit_count[x, y, ai]) + 1e-10
-            )
-
-            policy = self.epsilon_greedy(
-                np.argmax(self.action_values[x, y]), epsilon=self.epsilon
-            )
-            self.policy[x, y] = policy
-            # sv = np.dot(self.action_values[x, y], self.policy[x, y])
-            sv = np.max(self.action_values[x, y])
-            if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
-                stable = False  # 如果状态价值变化超过阈值，认为策略还没有达到最优
-            self.state_values[x, y] = sv  # 更新状态价值
-
-        return stable
-
-    def policy_evaluation(self):
-        # for x in range(self.rows):
-        #     for y in range(self.cols):
-        states, actions, rewards = self.get_episode()  # 第一次迭代使用完全随机的episode
-
-        visit_count = np.zeros(
-            (self.rows, self.cols, len(self.action_space)), dtype=int
-        )  # 每个状态-动作对的访问次数
-        returns = np.zeros(
-            (self.rows, self.cols, len(self.action_space)), dtype=np.float32
-        )
-        g = 0
-        for t in reversed(range(len(states))):
-            x, y = states[t]
-            ai = actions[t]
-            r = rewards[t]
-            g = self.gamma * g + r  # 计算从t时刻开始的回报
-            returns[x, y, ai] += g  # 每访问一次某个(s, a)，增加一个sample，
-            visit_count[x, y, ai] += 1  # 记录访问该(s, a)的次数
-            # policy evaluation, 使用均值估计方法来更新action value
-            self.action_values[x, y, ai] = returns[x, y, ai] / (
-                visit_count[x, y, ai] + 1e-10
-            )
-
-    def policy_improvement(self):
-        stable = True
-        for x in range(self.rows):
-            for y in range(self.cols):
-                self.policy[x, y] = self.epsilon_greedy(
-                    np.argmax(self.action_values[x, y]), epsilon=self.epsilon
-                )
-                # sv = np.dot(self.action_values[x, y], self.policy[x, y])
-                sv = np.max(self.action_values[x, y])
-                if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
-                    stable = False  # 如果状态价值变化超过阈值，认为策略还没有达到最优
-                self.state_values[x, y] = sv  # 更新状态价值
-        return stable
-
     def train(self):
         iter = tqdm.tqdm(range(self.HP.max_iterations))
+        Returns = np.zeros((self.rows, self.cols, len(self.action_space)), dtype=np.float32)
+        Nums = np.zeros_like(Returns, dtype=np.float32)
         for i in iter:
-            """value iteration 形式的MC Exploring Starts算法"""
-            state_value_stable = self.value_iteration_step()
-            self.draw_picture(1)  # 每次迭代后绘制一次图
-            if state_value_stable:
-                print(f"Policy converged after {i+1} iterations.")
-                break
+            states, actions, rewards = self.get_episode()
+            g = 0
+            for t in reversed(range(len(states))):
+                x, y = states[t]
+                ai = actions[t]
+                r = rewards[t]
+                g = self.gamma * g + r
+                Returns[x, y, ai] += g
+                Nums[x, y, ai] += 1
 
-            """policy iteration 形式的MC Exploring Starts算法"""
-            # self.policy_evaluation()
-            # state_value_stable = self.policy_improvement()
-            # self.draw_picture(1)  # 每次迭代后绘制一次图
-            # if state_value_stable:
-            #     print(f"Policy converged after {i+1} iterations.")
-            #     break
+                # policy evaluation
+                self.action_values[x, y, ai] = Returns[x, y, ai] / Nums[x, y, ai]
+
+                # policy improvement
+                max_index = np.argmax(self.action_values[x, y])
+                self.policy[x, y] = self.epsilon_greedy(max_index, self.epsilon)
+            
+            self.epsilon *= self.lr
+
+            self.draw_picture(1)
+            iter.set_description(f"epsilon={self.epsilon:.4f}")
+
 
         self.print_optimal_policy()  # 输出最终的最优策略
         self.draw_picture()
@@ -171,7 +100,8 @@ hp = HyperParameters()
 hp.rows = 5
 hp.cols = 5
 hp.gamma = 0.5
-hp.max_iterations = 1000
+hp.epsilon = 0.1
+hp.max_iterations = 10000
 
 env = MCEpsilonGreedy(hp, action_space=5)
 env.train()

@@ -30,15 +30,16 @@ class MentoCarioBsic(GridWorldEnv):
 
     def __init__(self, HP: HyperParameters, action_space=9, newgrid=False):
         super().__init__(HP, action_space, newgrid)
-        self.sample_episodes = 50  # 每个状态-动作对采样的episode数量，增加这个数量可以提高策略评估的准确性，但也会增加计算时间
-        self.episode_length = 100  # 从改变episode长度的经验来看，过短的episode可能无法充分捕捉到环境的动态和奖励结构，导致策略评估不准确；最终迭代的policy会最优，但是state value不一定最优。
-
+        self.sample_episodes = 200  # 每个状态-动作对采样的episode数量，增加这个数量可以提高策略评估的准确性，但也会增加计算时间
+        self.episode_length = 30  # 从改变episode长度的经验来看，过短的episode可能无法充分捕捉到环境的动态和奖励结构，导致策略评估不准确；最终迭代的policy会最优，但是state value不一定最优。
 
         """ 
         MC方法的特性：
         return = Rt+1 + γRt+2 + γ2Rt+3 + . . . .，epsiode越长，引入的随机变量越多，方差越大。
-        这里epsilon必须足够小，否则很难收敛，原因是随机探索，epsiode越往后，越会引入高方差，导致价值估计不稳定，策略改进会反复震荡
+        这里epsilon较大，导致难收敛，原因是随机探索，epsiode越往后，越会引入高方差，导致价值估计不稳定，策略改进会反复震荡
+        加入一个(0,1)之间的系数，让epsilon逐渐减小
         """
+        self.lr=0.5
         self.truncate_num = 10  # 使用truncate policy iteration来加速收敛，即在策略评估阶段只迭代固定次数，而不是一直迭代到完全收敛，这样可以在某些情况下更快地找到一个近似最优的策略。
 
     def sample_episdoe(self, x, y, a):
@@ -78,7 +79,8 @@ class MentoCarioBsic(GridWorldEnv):
                     if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
                         stable = False
                     self.state_values[x, y] = sv
-            self.epsilon *= 0.5
+            
+            self.epsilon *= self.lr
             self.draw_picture(1)
             if stable:
                break
