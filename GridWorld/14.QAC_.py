@@ -45,6 +45,9 @@ class QAC(GridWorldEnv):
         self.policy_optimizer = torch.optim.Adam(
             self.policy_network.parameters(), lr=self.policy_lr
         )
+        lambda1 = lambda epoch: epoch // 3
+        lambda2 = lambda epoch: 0.95 ** epoch
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.policy_optimizer, lr_lambda=[lambda1, lambda2])
 
         self.q_weights = np.random.normal(
             0, 0.1, len(["x", "y", "x*y", "x^2", "y^2", "a", "a^2", "1"])
@@ -125,6 +128,7 @@ class QAC(GridWorldEnv):
                 nx, ny = nx2, ny2
                 p = p2
             self.policy_optimizer.step()
+            lr = self.scheduler.get_lr()
             self.update_values()
             iter.set_postfix({"loss": np.mean(losses)})
 

@@ -42,6 +42,7 @@ class Sarsa(GridWorldEnv):
             a2, ai2 = self.select_action(x2, y2)
             q_s_a_t = self.action_values[x, y, ai]
             q_s1_a1_t = self.action_values[x2, y2, ai2]
+
             # update q-value
             q_s_a_t1 = q_s_a_t - self.lr * (q_s_a_t - (r + self.gamma * q_s1_a1_t))
             if np.abs(q_s_a_t1 - self.action_values[x, y, ai]) > self.HP.end_condition:
@@ -52,10 +53,10 @@ class Sarsa(GridWorldEnv):
             self.policy[x, y] = self.epsilon_greedy(
                 np.argmax(self.action_values[x, y]), self.epsilon
             )
+            
             self.state_values[x, y] = np.dot(
                 self.action_values[x, y], self.policy[x, y]
             )
-            self.draw_picture(1)
             x, y = x2, y2
             a, ai = a2, ai2
         return action_value_stable
@@ -67,6 +68,10 @@ class Sarsa(GridWorldEnv):
             if policy_stable:
                 print(f"Policy converged after {i+1} iterations.")
                 break
+            self.lr *=0.99
+            self.epsilon *=0.99
+            self.draw_picture(1)
+            iter.set_description(f"lr={self.lr:.6f}, epsilon={self.epsilon:.6f}")
 
         self.print_optimal_policy()
         self.draw_picture()
@@ -77,5 +82,5 @@ hp.max_iterations = 10000000
 hp.gamma = 0.9
 hp.rows = 5
 hp.cols = 5
-env = Sarsa(hp)
+env = Sarsa(hp,action_space=5)
 env.train()

@@ -1,34 +1,58 @@
 """Robbins-Monro theorem is an pioneering work in the field of stochastic approximation"""
 
 import numpy as np
-import tqdm
-
 import matplotlib.pyplot as plt
+from scipy import stats
 
 
-def ImportanceSampling():
-    """演示重要性采样"""
-    import torch
-    xset = [i for i in range(100)]
-    p0 = np.random.normal(2, 1, size = len(xset))
-    p0 = torch.softmax(torch.tensor(p0), dim=0).numpy()
-    p1 = np.random.normal(5, 1, size = len(xset))
-    p1 = torch.softmax(torch.tensor(p1), dim=0).numpy()
+def ContractionMapping():
+    """收缩映射"""
+    # 定义一个简单的函数，目标是找到其不动点，即x = func(x)的解
+    def func(x):
+        return 0.5 * np.sin(x)  
 
-    s0 = np.random.choice(xset, p=p0, size=10000)
-    m0 = np.mean(s0)
-    s1 = np.random.choice(xset, p=p1, size=10000)
-    m1 = np.mean(s1)
-    print(m1, m0)
-
-    plt.plot(xset, p0, label="p0")
-    plt.plot(xset, p1, label="p1")
+    x_iter = []
+    x = 2  # 初始值
+    for i in range(20):
+        x = func(x)  # 更新x，目标是使x接近func(x)，即找到不动点
+        x_iter.append(x)
+    plt.plot(x_iter)
+    plt.axhline(0, color="r", linestyle="--", label="Target Value")
+    plt.title("Convergence of Contraction Mapping")
+    plt.xlabel("Iteration")
+    plt.ylabel("Estimated Fixed Point")
     plt.legend()
     plt.show()
 
-ImportanceSampling()
+# ContractionMapping()
 
+def RobbinsMonro():
+    """
+    求解g(x)=0的根x_{*}，迭代方法，即RM算法：
+    x_{k+1} = x_{k} - α_{k}*g~(x_{k}, error_{k})
+    这里g~=g(x)+error：真实值加上一个误差，即观测值
+    """
+    def g_erro(x, erro): 
+        return np.tanh(x - 1.71) + erro
 
+    w_iter = []
+    w = 0
+    for i in range(100000):
+        if i == 0:
+            w = 2  # 初始化一个值
+        else:
+            error = np.random.normal(0, 1)
+            w = w - 0.0001 * g_erro(w, error)
+        w_iter.append(w)
+
+    plt.plot(w_iter)
+    plt.axhline(1.71, color="r", linestyle="--", label="Target Value 1.71")
+    plt.title("Convergence of SGD Estimate")
+    plt.xlabel("Iteration")
+    plt.ylabel("Estimated Mean")
+    plt.legend()
+    plt.show()
+# RobbinsMonro()
 
 
 def MeanEstimation():
@@ -38,69 +62,28 @@ def MeanEstimation():
     """
     xset = np.random.randint(0, 100, size=(10000,))
     xmean = float(np.mean(xset))  # 计算数据的真实均值
-    error = np.random.normal(0, 1, size=(100000,))  # 模拟噪声，均值为0，标准差为1
 
-    # w - x = [w - E(x)] + [E(x) - x] = g(w) + error
-    def g(w):  # 这样定义符合RM算法的表示
-        return w - np.random.choice(xset)
+    # g(w) = w - E[x]
+    def g_erro(w, error):  # 这样定义符合RM算法的表示
+        return w - np.random.choice(xset) + error
 
     w_iter = []
-    for i in range(10000):
+    for i in range(1000000):
         if i == 0:
             w = np.random.choice(xset)  # 随机初始化一个w
         else:
-            w = (
-                w - (g(w) + error[i]) / i
-            )  # 更新估计值，目标是使w接近数据的真实均值,这里可以将error设为0
+            error = np.random.normal(0, 1)
+            w = w - 0.0001 * g_erro(w, error)
         w_iter.append(w)
 
     plt.plot(w_iter)
     plt.axhline(xmean, color="r", linestyle="--", label="Target Value")
-    plt.title("Convergence of SGD Estimate")
+    plt.title("Convergence Mean Estimation")
     plt.xlabel("Iteration")
     plt.ylabel("Estimated Mean")
     plt.legend()
     plt.show()
-
-
-def RobbinsMonro():
-    """
-    RM理论成立条件：
-    1. 目标函数f(w)在w=theta处有唯一根，即f(theta)=0，f(w)的倒数存在且连续0<c_{1}<=f'(w)<=c_{2}，即f(w)是单调的；
-    2. 学习率α_{k}满足sum(α_{k})=inf且sum((α_{k})^2)<inf；即学习率逐渐减小但不太快。
-    3. 噪声项epsilon_n满足E[epsilon_n|w_n]=0且Var(epsilon_n|w_n)<=sigma^2，即噪声是零均值且方差有界的随机变量。
-    在满足上述条件下，RM算法的迭代过程w_{n+1}=w_n - alpha_n * (f(w_n) + epsilon_n)将以概率1收敛到theta，即w_n -> theta as n->inf。
-    该算法的核心思想是通过不断调整参数w来逼近目标函数f的根theta，学习率alpha_n控制了每次更新的步长，而噪声项epsilon_n则模拟了实际应用中可能存在的随机扰动。
-    """
-    """
-    求解g(x)=0的根x_{*}，迭代方法，即RM算法：
-    x_{k+1} = x_{k} - α_{k}*g~(x_{k}, error_{k})
-    这里g~=g(x)+error：真实值加上一个误差，即观测值
-    """
-    error = np.random.normal(0, 1, size=(100000,))  # 模拟噪声，均值为0，标准差为1
-
-    def g(x):  # 这里定义一个g(x)函数，要求g(x)=0的根
-        # return np.power(x, 3) - 5
-        return np.tanh(x - 1.71)
-
-    x_iter = []
-    x = 0
-    for i in range(10000):
-        if i == 0:
-            x = 2  # 模拟真实输出
-        else:
-            x = x - (g(x) + error[i]) / i
-            # 这里 g(x)+error表示带有误差的观测值，即g~(x_{k}, erro_{k}),实际问题中，我们可能不知道g(x)的表达式，只能输入一个值，获取一个带噪声的观测结果。这里演示所以给定了g(x)
-        x_iter.append(x)
-
-    plt.plot(x_iter)
-    plt.axhline(1.71, color="r", linestyle="--", label="Target Value 1.71")
-    plt.title("Convergence of SGD Estimate")
-    plt.xlabel("Iteration")
-    plt.ylabel("Estimated Mean")
-    plt.legend()
-    plt.show()
-
+# MeanEstimation()
 
 def GradientDescent():
     """
@@ -190,26 +173,77 @@ def MBGD(batch_size=10):
     plt.show()
 
 
-def ContractMap():
-    """收缩映射"""
-
-    def func(x):
-        return 0.5 * np.sin(
-            x
-        )  # 定义一个简单的函数，目标是找到其不动点，即x = func(x)的解
-
-    x_iter = []
-    x = 2  # 初始值
-    for i in range(20):
-        x = func(x)  # 更新x，目标是使x接近func(x)，即找到不动点
-        x_iter.append(x)
-    plt.plot(x_iter)
-    plt.axhline(0, color="r", linestyle="--", label="Target Value")
-    plt.title("Convergence of Contraction Mapping")
-    plt.xlabel("Iteration")
-    plt.ylabel("Estimated Fixed Point")
-    plt.legend()
+def basic_importance_sampling():
+    """
+    目标：估计 E_{X~N(0,1)}[f(X)]，其中 f(x) = max(0, x) 的期望
+    使用重要性采样从 N(2,1) 采样来估计
+    """
+    
+    np.random.seed(42)
+    n_samples = 1000
+    
+    # 目标分布 p(x)：标准正态分布 N(0,1)
+    # 提议分布 q(x)：N(2,1) - 偏移的正态分布
+    def target_pdf(x):
+        return stats.norm.pdf(x, loc=0, scale=1)
+    
+    def proposal_pdf(x):
+        return stats.norm.pdf(x, loc=2, scale=1)
+    
+    # 要估计的函数 f(x)
+    def f(x):
+        return np.maximum(0, x)  # ReLU 函数
+    
+    # 从提议分布采样
+    samples = np.random.normal(loc=2, scale=1, size=n_samples)
+    
+    # 计算重要性权重
+    weights = target_pdf(samples) / proposal_pdf(samples)
+    
+    # 重要性采样估计
+    f_values = f(samples)
+    estimate = np.sum(weights * f_values) / np.sum(weights)
+    
+    # 真实值（解析解或蒙特卡洛）
+    true_value = 1 / np.sqrt(2 * np.pi)  # E[max(0, X)] for X~N(0,1)
+    
+    print("=" * 50)
+    print("基础重要性采样示例")
+    print("=" * 50)
+    print(f"目标分布: N(0,1), 提议分布: N(2,1)")
+    print(f"函数 f(x) = max(0, x)")
+    print(f"重要性采样估计: {estimate:.4f}")
+    print(f"真实值: {true_value:.4f}")
+    print(f"相对误差: {abs(estimate - true_value)/true_value*100:.2f}%")
+    
+    # 可视化
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    
+    # 左图：分布对比
+    x_range = np.linspace(-4, 6, 200)
+    ax1 = axes[0]
+    ax1.plot(x_range, target_pdf(x_range), 'b-', label='Target p(x): N(0,1)', linewidth=2)
+    ax1.plot(x_range, proposal_pdf(x_range), 'r--', label='Proposal q(x): N(2,1)', linewidth=2)
+    ax1.hist(samples, bins=30, density=True, alpha=0.3, color='red', label='Samples from q')
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('Density')
+    ax1.set_title('分布对比')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # 右图：权重分布
+    ax2 = axes[1]
+    ax2.hist(weights, bins=50, alpha=0.7, edgecolor='black')
+    ax2.set_xlabel('Importance Weights')
+    ax2.set_ylabel('Frequency')
+    ax2.set_title(f'权重分布 (有效样本量: {1/np.sum((weights/np.sum(weights))**2):.0f}/{n_samples})')
+    ax2.axvline(1, color='red', linestyle='--', label='Weight=1')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
     plt.show()
+    
+    return estimate
 
-
-ContractMap()
+basic_importance_sampling()
