@@ -22,7 +22,7 @@ class TDLinear(GridWorldEnv):
 
     def __init__(self, HP: HyperParameters, action_space=9, newgrid=False):
         super().__init__(HP, action_space, newgrid)
-        self.episode_length = 500 * 2
+        self.episode_length = 500 * 200
         self.lr = 0.001
         
         # v(s, w)是s的函数，对于s的坐标x,y有 v(s, w) = w[0]*x + w[1]*y + w[2]，这里我们用一个简单的线性函数逼近来估计状态-动作价值
@@ -31,6 +31,15 @@ class TDLinear(GridWorldEnv):
             len(["x", "y", "x*y", "x^2", "y^2", "x^2*y", "y^2*x", "x^2*y^2", "1"])
         )  # 线性函数逼近的权重，包含x,y,1三个特征的权重
         self.function_weights[-1] = 1
+
+    def reset(self):
+        super().reset()
+        # 初始化一个随机的策略
+        self.action_values = np.random.random((self.rows, self.cols, len(self.action_space)))
+        for x in range(self.rows):
+            for y in range(self.cols):
+                max_id = np.argmax(self.action_values[x, y])
+                self.policy[x, y] = self.epsilon_greedy(max_id, self.epsilon)
 
     def v_feature(self, norm_x, norm_y):
         return np.array(
@@ -50,50 +59,47 @@ class TDLinear(GridWorldEnv):
     def v_value(self, norm_x, norm_y):
         return np.dot(self.function_weights, self.v_feature(norm_x, norm_y))
 
-    def policy_evaluation(self):
+    def TD_Episode(self):
         """评估当前策略，更新状态价值"""
         x, y = np.random.randint(0, self.rows), np.random.randint(
             0, self.cols
-        )  # 随机选择一个状态进行更新
+        )  # 随机选择一个初始状态
+        stable = True
         for _ in range(self.episode_length):
-            a, ai = self.select_action(x, y)  # 根据当前策略选择一个动作
+            a, ai = self.select_action(x, y) 
             nx, ny = self.normalize_coordinates(x, y)  # 归一化坐标
+
             # 执行动作并获得奖励和下一个状态
             r, (x2, y2) = self.get_next_state_and_reward((x, y), a)
             nx2, ny2 = self.normalize_coordinates(x2, y2)  # 归一化坐标
+
             # value update 权重更新
+            sv = self.v_value(nx, ny)
+            sv2 = self.v_value(nx2, ny2)
             self.function_weights = self.function_weights - self.lr * (
-                self.v_value(nx, ny) - (r + self.gamma * self.v_value(nx2, ny2))
+                sv - (r + self.gamma * sv2)
             ) * (self.v_feature(nx, ny))
-            x, y = x2, y2  # 移动到下一个状态
-        stable = self.policy_improvement(x, y)  # 每次评估后进行一次策略改进
+
+
+            sv = self.v_value(nx, ny)
+            if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
+                stable = False
+            self.state_values[x, y] = sv
+            x, y = x2, y2  # 移动到下一个
         return stable
 
-    def policy_improvement(self, x, y):
-        qvs = []  # q value
-        for a in self.action_space:
-            r, (x2, y2) = self.get_next_state_and_reward([x, y], a)
-            nx2, ny2 = self.normalize_coordinates(x2, y2)  # 归一化坐标
-            q = r + self.gamma * self.v_value(nx2, ny2)
-            qvs.append(q)
-        self.policy[x, y] = self.epsilon_greedy(np.argmax(qvs), self.epsilon)
-        sv = sum(self.policy[x, y] * qvs)  # 当前策略下的期望价值
-        if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
-            stable = False
-        self.state_values[x, y] = sv  # 更新状态价值为当前策略下的期望价值
-        self.draw_picture(1)
-        return stable
 
     def train(self):
         iter = tqdm.tqdm(range(self.HP.max_iterations))
         for i in iter:
-            # 策略评估
-            policy_stable = self.policy_evaluation()
+            policy_stable = self.TD_Episode()
 
+            self.lr *= 0.999
+            iter.set_description(f"lr={self.lr:.6f}")
+            self.draw_picture(1)
             if policy_stable:
                 print(f"\nPolicy iteration converged after {i + 1} iterations!")
                 break
-
         self.print_optimal_policy()
         self.draw_picture()
 

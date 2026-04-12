@@ -24,66 +24,58 @@ class DQN(GridWorldEnv):
 
     def __init__(self, HP: HyperParameters, action_space=9, newgrid=False):
         super().__init__(HP, action_space, newgrid)
-        self.train_epoch = 5000
-        self.episode_length = 1000
-        self.lr = 0.0001
-        self.targe_update_freq = 50  # 目标网络更新频率
+        self.train_epoch = 50000
+        self.episode_length = 100000
+        self.lr = 0.01
+        self.targe_update_freq = 10  # target network更新频率
         self.batch_size = 100  # 经验回放的批量大小
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available() else "cpu"
-        )  # 使用MPS加速（如果可用）
-        # 定义一个简单的神经网络来逼近Q值函数
+        )  
+        
         self.main_network = nn.Sequential(
             nn.Linear(2, 128),  # 输入状态（x, y）和动作
             nn.ReLU(),
             nn.Linear(128, 256),
             nn.ReLU(),
-            # nn.Linear(256, 512),
-            # nn.ReLU(),
-            # nn.Linear(512, 1024),
-            # nn.ReLU(),
-            # nn.Linear(1024, 512),
-            # nn.ReLU(),
-            # nn.Linear(512, 256),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, len(self.action_space)),  # 输出Q值
         ).to(
             self.device
-        )  # 将网络移动到设备上
+        ) 
         self.target_network = nn.Sequential(
             nn.Linear(2, 128),
             nn.ReLU(),
             nn.Linear(128, 256),
             nn.ReLU(),
-            # nn.Linear(256, 512),
-            # nn.ReLU(),
-            # nn.Linear(512, 1024),
-            # nn.ReLU(),
-            # nn.Linear(1024, 512),
-            # nn.ReLU(),
-            # nn.Linear(512, 256),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, len(self.action_space)),
         ).to(
             self.device
-        )  # 将网络移动到设备上
+        )
         self.target_network.load_state_dict(
             self.main_network.state_dict()
-        )  # 初始化目标网络权重与主网络相同
+        )  # 将main network权重复制个target network
         self.optimizer = torch.optim.SGD(self.main_network.parameters(), lr=self.lr)
         self.norm_action_space = torch.tensor(
             [self.normalize_action(i) for i in range(len(self.action_space))]
         ).to(
             self.device
-        )  # 将动作空间中的动作归一化
+        ) 
         self.loss_fn = nn.MSELoss()
         self.replay_buffer = self.initialize_replay_buffer().to(
             self.device
-        )  # 经验回放缓冲区
+        )  
         self.dataset = torch.utils.data.TensorDataset(
             self.replay_buffer[:, :2],  # state,
             self.replay_buffer[:, 2],  # norm_action
@@ -93,48 +85,50 @@ class DQN(GridWorldEnv):
         )
         self.dataloader = torch.utils.data.DataLoader(
             self.dataset, batch_size=self.batch_size, shuffle=True
-        )  # 创建数据加载器对象
+        )  
 
     def initialize_replay_buffer(self):
         replay_buffer = []
         x, y = np.random.randint(0, self.rows), np.random.randint(
             0, self.cols
-        )  # 随机选择一个初始状态
+        )  
         for _ in range(self.episode_length):
-            a, ai = self.select_action(x, y)  # 根据当前策略选择一个动作
+            a, ai = self.select_action(x, y)  
             r, (x2, y2) = self.get_next_state_and_reward(
                 (x, y), a
-            )  # 执行动作并获得奖励和下一个状态
-            nx, ny = self.normalize_coordinates(x, y)  # 归一化坐标
-            na = self.normalize_action(ai)  # 归一化动作
-            nx2, ny2 = self.normalize_coordinates(x2, y2)  # 归一化坐标
-            replay_buffer.append([nx, ny, na, ai, r, nx2, ny2])  # 将经验存储到记忆库中
-            x, y = x2, y2  # 更新当前状态为下一个状态
+            )  
+            nx, ny = self.normalize_coordinates(x, y)  
+            na = self.normalize_action(ai) 
+            nx2, ny2 = self.normalize_coordinates(x2, y2) 
+            replay_buffer.append([nx, ny, na, ai, r, nx2, ny2])  
+            x, y = x2, y2  
         return torch.tensor(replay_buffer, dtype=torch.float32).to(
             self.device
-        )  # 将经验回放缓冲区转换为PyTorch张量并移动到设备上
+        )  
 
-    def policy_improvement(self):
+    def get_policy(self):
         policy_stable = True
         for x in range(self.rows):
             for y in range(self.cols):
-                nx, ny = self.normalize_coordinates(x, y)  # 归一化坐标
-                qvs = self.target_network(
-                    torch.tensor([nx, ny], device=self.device)
-                ).squeeze()
-                # 计算当前状态的Q值
-                maxq = torch.argmax(qvs)
+                nx, ny = self.normalize_coordinates(x, y) 
+                with torch.no_grad():
+                    qvs = self.target_network(
+                        torch.tensor([nx, ny], device=self.device)
+                    ).squeeze()
+             
+                max_id = torch.argmax(qvs)
 
-                self.policy[x, y] = self.epsilon_greedy(maxq.item(), self.epsilon)
+                self.policy[x, y] = self.epsilon_greedy(max_id.item(), self.epsilon)
+                sv = np.dot(qvs.cpu().detach().numpy(), self.policy[x, y])
                 if (
-                    np.abs(self.state_values[x, y] - maxq.item())
+                    np.abs(self.state_values[x, y] - sv)
                     > self.HP.end_condition
-                ):  # 如果策略发生了改变
+                ):  
                     policy_stable = False
-                self.state_values[x, y] = maxq.item()
+                self.state_values[x, y] = sv
 
-        self.draw_picture(1)  # 每次训练后绘制一次图像
-        return policy_stable  # 返回策略是否稳定
+        self.draw_picture(1)  
+        return policy_stable 
 
     def train(self):
         iter = tqdm.tqdm(range(self.train_epoch))
@@ -143,36 +137,39 @@ class DQN(GridWorldEnv):
             for batch in self.dataloader:
                 s, na, ai, r, ns = batch
                 ai = ai.int()
-                qvs_m = self.main_network(s).squeeze()  # 计算当前状态的Q值
-                with torch.no_grad():
-                    # 初始化下一个状态的Q值
-                    qvs_t = self.target_network(ns).squeeze()
-                    # 获取下一个状态的最大Q值
-                    max_qt, _ = qvs_t.max(dim=1)
-                    avs_t = r + self.gamma * max_qt
-                qvs_m = qvs_m.gather(1, ai.unsqueeze(1)).squeeze()
-                loss = self.loss_fn(qvs_m, avs_t) * 10  # 计算损失
-                losses.append(loss.item())
-                self.optimizer.zero_grad()  # 清除之前的梯度
-                loss.backward()  # 反向传播计算梯度
-                self.optimizer.step()  # 更新主网络的权重
-            iter.set_description(
-                f"Epoch {epoch+1}/{self.train_epoch}, AverageLoss: {np.mean(losses):.6f}"
-            )  # 更新进度条描述
+                #计算main network输出
+                m_qvs = self.main_network(s).squeeze() 
 
+                #计算target network输出
+                with torch.no_grad():
+                    t_qvs = self.target_network(ns).squeeze()
+                    t_qmax, _ = t_qvs.max(dim=-1)
+                    t_q_next = r + self.gamma * t_qmax
+
+                #更新main network权重
+                m_q = m_qvs.gather(-1, ai.unsqueeze(1)).squeeze() #第ai个q-value
+                loss = self.loss_fn(m_q, t_q_next)
+                losses.append(loss.item())
+                self.optimizer.zero_grad()  
+                loss.backward() 
+                self.optimizer.step()
+
+            iter.set_description(
+                f"Epoch {epoch+1}/{self.train_epoch}, ava_loss: {np.mean(losses):.6f}, lr={self.lr:.6f}"
+            )  
+
+            #更新target network权重
             if (epoch + 1) % self.targe_update_freq == 0:
                 self.target_network.load_state_dict(
                     self.main_network.state_dict()
-                )  # 定期更新目标网络权重
-                self.policy_improvement()  # 每次训练后进行一次策略改进
-        self.draw_picture(0)  # 训练完成后绘制最终图像
+                ) 
+                self.get_policy() 
+        self.draw_picture() 
 
 
 hp = HyperParameters()
-hp.gamma = 0.9
+hp.gamma = 0.5
 hp.rows = 5
 hp.cols = 5
-# hp.r_border = -10
-# hp.r_forbidden = -10
 env = DQN(hp, action_space=5)
 env.train()

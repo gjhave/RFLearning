@@ -41,7 +41,7 @@ class TDFuncAppro_Sarsa(GridWorldEnv):
     def __init__(self, HP: HyperParameters, action_space=9, newgrid=False):
         super().__init__(HP, action_space, newgrid)
         self.episode_length = 1000
-        self.lr = 0.00001
+        self.lr = 0.001
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.network = nn.Sequential(
             nn.Linear(3, 128),
@@ -105,7 +105,7 @@ class TDFuncAppro_Sarsa(GridWorldEnv):
                 self.policy[x, y] = self.epsilon_greedy(
                     np.argmax(qvs), epsilon=self.epsilon
                 )
-                sv = max(qvs)
+                sv = np.dot(self.policy[x, y], qvs)
                 if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
                     stable = False
 
@@ -120,6 +120,9 @@ class TDFuncAppro_Sarsa(GridWorldEnv):
         for i in iter:
             state_value_stable = self.value_iteration_step()
             self.draw_picture(1)
+            self.lr *= 0.999
+            self.epsilon *= 0.999
+            iter.set_description(f"lr={self.lr:.6f}, epsilon={self.epsilon:.6f}")
 
             if state_value_stable:
                 print(f"\nPolicy iteration converged after {i + 1} iterations!")
@@ -134,5 +137,5 @@ hp.max_iterations = 10000
 hp.gamma = 0.9
 hp.rows = 5
 hp.cols = 5
-env = TDFuncAppro_Sarsa(hp, action_space=9)
+env = TDFuncAppro_Sarsa(hp, action_space=5)
 env.train()

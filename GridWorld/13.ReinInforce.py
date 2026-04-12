@@ -37,34 +37,29 @@ class ReinInforce(GridWorldEnv):
         self.episode_length = 1000
         self.lr = 0.001
         self.device = torch.device(
-            "mps" if torch.backends.mps.is_available() else "cpu"
-        )  # 使用MPS加速（如果可用）
-        # 定义一个简单的神经网络来逼近策略函数
+            "mps" if torch.backends.mps.is_available() else "cpu")
+
         self.policy_network = nn.Sequential(
             nn.Linear(2, 128),  # 输入状态（x, y）
             nn.ReLU(),
             nn.Linear(128, 256),
             nn.ReLU(),
-            # nn.Linear(256, 512),
-            # nn.ReLU(),
-            # nn.Linear(512, 256),
-            # nn.ReLU(),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, len(self.action_space)),
             nn.Softmax(dim=-1),  # 输出动作概率分布
         ).to(self.device)
-        self.optimizer = torch.optim.Adam(self.policy_network.parameters(), lr=self.lr)
+
+        self.optimizer = torch.optim.SGD(self.policy_network.parameters(), lr=self.lr)
         self.torch_action_space = torch.tensor(
             [self.normalize_action(i) for i in range(len(self.action_space))]
         ).to(self.device)
         self.loss_fn = nn.MSELoss()
         self.target = None
-        for x in range(self.rows):
-            for y in range(self.cols):
-                if self.grid[x, y] == self.target_flag:
-                    self.target = [y, x]
-                    break
 
     def get_episode(self):
         states = []
@@ -73,16 +68,11 @@ class ReinInforce(GridWorldEnv):
         norm_states = []
         total_returns = []
         x, y = np.random.choice(self.rows), np.random.choice(self.cols)
-        # next_x, next_y = 0, 0  # for debug
 
         for t in range(self.episode_length):
-            # self.agent_step(next_x, next_y)  # for debug
-            # if next_x == self.target[0] and next_y == self.target[1]:
-            #     break
             states.append([x, y])
             nx, ny = self.normalize_coordinates(x, y)
             norm_states.append([nx, ny])
-            # a, ai = self.select_action(x, y)
             with torch.no_grad():
                 p = self.policy_network(torch.tensor([nx, ny], dtype=torch.float32, device=self.device))
                 dist = torch.distributions.Categorical(p)
@@ -91,7 +81,7 @@ class ReinInforce(GridWorldEnv):
             r, (x2, y2) = self.get_next_state_and_reward((x, y), self.action_space[int(ai.item())])
             rewards.append(r)
             x, y = x2, y2
-        r = 0
+
         total_returns = self.compute_return(rewards)
         return states, norm_states, actions, rewards, total_returns
 
@@ -104,54 +94,57 @@ class ReinInforce(GridWorldEnv):
             returns.insert(0, G)
         return torch.tensor(returns, dtype=torch.float32).to(self.device)
 
-    def policy_improvement(self):
+    def get_policy(self):
+        stable = True
         for x in range(self.rows):
             for y in range(self.cols):
                 norm_x, norm_y = self.normalize_coordinates(x, y)
-                # self.action_values[x, y, :] = avs[x, y, :] / (vc[x, y, :] + 1e-8)
-                self.policy[x, y] = (
-                    self.policy_network(
-                        torch.FloatTensor([norm_x, norm_y]).to(self.device)
+                with torch.no_grad():
+                    self.policy[x, y] = (
+                        self.policy_network(
+                            torch.FloatTensor([norm_x, norm_y]).to(self.device)
+                        )
+                        .cpu()
+                        .detach()
+                        .numpy()
                     )
-                    .cpu()
-                    .detach()
-                    .numpy()
-                    .flatten()
-                )
-                # self.state_values[x, y] = np.dot(
-                #     self.policy[x, y], self.action_values[x, y]
-                # )  # 更新状态价值为当前策略下的期望价值
-        self.draw_picture(wait_time=1)  # 每次策略改进后更新图片
+                sv = np.dot(self.policy[x, y], self.action_values[x, y])
+                if np.abs(sv - self.state_values[x, y]) > self.HP.end_condition:
+                    stable = False
+                self.state_values[x, y] = sv
+        return stable
 
     def train(self):
         iter = tqdm.tqdm(range(self.train_epoch))
         for epoch in iter:
             sts, nsts, acs, rs, trs = self.get_episode()  # 生成一个episode
-
-            avs = np.zeros_like(self.action_values)  # action values
-            vc = np.zeros_like(self.action_values)  # vist count
             episode_loss = []
-            # value update
-            with torch.enable_grad():
+
+            # loss = torch.tensor(0, dtype=torch.float32).to(self.device)
+            for t in range(len(sts)):
+                # value updat
+                G = trs[t]
+                self.action_values[sts[t][0], sts[t][1], acs[t]] = G.item()
+
                 # policy update
-                loss = torch.tensor(0, dtype=torch.float32).to(self.device)
-                for t in range(len(sts)):
-                    policy = self.policy_network(
-                        torch.FloatTensor(nsts[t]).to(self.device)
-                    )
-                    # 获取实际动作的 log 概率
-                    # action_tensor = torch.tensor([actions[t]]).to(self.device)
-                    """这里一定要注意，是对当前状态的具体动作的log求导，即lnπ(a_{t}|s_{t}, θ)这里是有a_{t}的"""
-                    log_prob = torch.log(policy[acs[t]] + 1e-8)  # 加小常数防止 log(0)
-                    G = trs[t]
-                    loss += -log_prob * G
-                    episode_loss.append(loss.item())
-                """MC方法不能每一步都更新梯度，每步都更新，偏差会很大，无法收敛"""
+                policy = self.policy_network(
+                    torch.FloatTensor(nsts[t]).to(self.device)
+                )
+                # 获取实际动作的 log 概率
+                """这里一定要注意，是对当前状态的具体动作的log求导，即lnπ(a_{t}|s_{t}, θ)这里是有a_{t}的"""
+                dist = torch.distributions.Categorical(policy)
+                log_prob = dist.log_prob(torch.tensor(acs[t], device=self.device))
+                # log_prob = torch.log(policy[acs[t]] + 1e-10)  # 加小常数防止 log(0)
+                loss = -log_prob * G
+                episode_loss.append(loss.item())
+                # """MC方法不能每一步都更新梯度，每步都更新，偏差会很大，无法收敛"""
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-            with torch.no_grad():
-                self.policy_improvement()
+            stable = self.get_policy()
+            self.draw_picture(1) 
+            if stable:
+                break
             iter.set_description(
                 f"Epoch {epoch + 1}/{self.train_epoch}, Loss: {np.mean(episode_loss):.8f}"
             )
@@ -161,4 +154,4 @@ class ReinInforce(GridWorldEnv):
 hp = HyperParameters()
 hp.rows = 5
 hp.cols = 5
-ReinInforce(hp, action_space=9).train()
+ReinInforce(hp, action_space=5).train()

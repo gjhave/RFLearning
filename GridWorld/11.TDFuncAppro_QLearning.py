@@ -30,57 +30,58 @@ class TDFuncAppro_QLearning(GridWorldEnv):
 
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.network = nn.Sequential(
-            nn.Linear(3, 64),
+            nn.Linear(3, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 256),
             nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(256, 512),
+            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
         ).to(self.device)
         self.optim = torch.optim.Adam(self.network.parameters(), self.lr)
         self.loss_fn = nn.MSELoss()
 
 
 
-    def value_iteration_step(self):
+    def Episode_step(self):
         """评估当前策略，更新状态价值"""
         policy_stable = True
 
         x, y = np.random.randint(0, self.rows), np.random.randint(
             0, self.cols
         )  # 随机选择一个状态进行更新
-        a, ai = self.select_action(x, y)  # 根据当前策略选择一个动作
-        # x, y = 0, 0 # for debug
         losses = []
         for _ in range(self.episode_length):
-            # self.agent_step(x, y) # for debug
+            a, ai = self.select_action(x, y)  
+            r, (x2, y2) = self.get_next_state_and_reward((x, y), a)
+
             # 归一化
             nx, ny = self.normalize_coordinates(x, y)
             na = self.normalize_action(ai)
+            nx2, ny2 = self.normalize_coordinates(x2, y2)
 
-            # 执行动作并获得奖励和下一个状态
-            r, (x2, y2) = self.get_next_state_and_reward((x, y), a)
             qvs1 = []
-            nx2, ny2 = self.normalize_coordinates(x2, y2)  # 归一化坐标
             # Q-learning在更新时使用max_a' Q(s', a')，因此需要计算下一个状态所有动作的价值
             # w下 x2, y2的值
-            with torch.no_grad():
-                for wai, wa in enumerate(self.action_space):
-                    wna = self.normalize_action(wai)
-                    # value = self.q_value(nx2, ny2, na2)
-                    value = self.network(torch.tensor(np.array([nx2, ny2, wna]), dtype=torch.float32, device=self.device))
-                    qvs1.append(value)
-                max_q1 = torch.max(torch.stack(qvs1))
+            # with torch.no_grad():
+            for wai, wa in enumerate(self.action_space):
+                wna = self.normalize_action(wai)
+                value = self.network(torch.tensor(np.array([nx2, ny2, wna]), dtype=torch.float32, device=self.device))
+                qvs1.append(value)
+            max_q1 = torch.max(torch.stack(qvs1))
 
-            # 更新权重 w - > w +1
+            # update value
             q_s = self.network(torch.tensor(np.array([nx, ny, na]), dtype=torch.float32, device=self.device))
             q_s1 = r + self.gamma * max_q1
-            loss = self.loss_fn(q_s, torch.tensor([q_s1]).to(self.device))
+            loss = self.loss_fn(q_s[0], q_s1)
             self.optim.zero_grad()
             loss.backward()
             self.optim.step()
             losses.append(loss.item())
 
-            # 更新策略 w+1 下，x，y处的策略
+            # update policy
             qvs = []
             with torch.no_grad():
                 for w1ai, w1a in enumerate(self.action_space):
@@ -104,10 +105,11 @@ class TDFuncAppro_QLearning(GridWorldEnv):
     def train(self):
         iter = tqdm.tqdm(range(self.HP.max_iterations))
         for i in iter:
-            # 策略评估
-            policy_stable, loss = self.value_iteration_step()
+            policy_stable, loss = self.Episode_step()
             self.draw_picture(1)
-            iter.set_description(f"loss:{loss:.8f}")
+            self.lr *= 0.999
+            self.epsilon *= 0.999
+            iter.set_description(f"lr={self.lr:.6f}, epsilon={self.epsilon:.6f}, ava_loss={np.mean(loss):.6f}")
 
             if policy_stable:
                 print(f"\nPolicy iteration converged after {i + 1} iterations!")
@@ -118,8 +120,8 @@ class TDFuncAppro_QLearning(GridWorldEnv):
 
 
 hp = HyperParameters()
-hp.gamma = 0.9
+hp.gamma = 0.5
 hp.rows = 5
 hp.cols = 5
-env = TDFuncAppro_QLearning(hp, action_space=9)
+env = TDFuncAppro_QLearning(hp, action_space=5)
 env.train()
